@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 24
 
@@ -23,7 +23,6 @@ jobs:
           mkdir -p src/pages/api/v1/anime
           mkdir -p src/lib src/types
           mkdir -p public
-          mkdir -p .github/workflows
 
       - name: Write package.json
         run: |
@@ -204,7 +203,6 @@ jobs:
             const data = all
               .map(animeToApi)
               .sort((a, b) => {
-                // Terbaru dulu
                 const ta = a.year ?? 0;
                 const tb = b.year ?? 0;
                 if (ta !== tb) return tb - ta;
@@ -309,62 +307,6 @@ jobs:
           /api/*
             Access-Control-Allow-Origin: *
             Content-Type: application/json; charset=utf-8
-          EOF
-
-      - name: Write deploy workflow
-        run: |
-          cat > .github/workflows/deploy.yml << 'EOF'
-          name: Deploy API
-
-          on:
-            push:
-              branches: [main]
-            repository_dispatch:
-              types: [data-updated]
-            workflow_dispatch:
-
-          jobs:
-            build-deploy:
-              runs-on: ubuntu-latest
-              timeout-minutes: 10
-              steps:
-                - name: Checkout api-qimochi
-                  uses: actions/checkout@v7
-
-                - name: Checkout qimochi-data
-                  uses: actions/checkout@v7
-                  with:
-                    repository: bimaakbar-dev/qimochi-data
-                    token: ${{ secrets.QIMOCHI_DATA_PAT }}
-                    path: _data
-
-                - name: Inject data
-                  run: |
-                    rm -rf src/content/anime
-                    mkdir -p src/content/anime
-                    if [ -d _data/src/content/anime ]; then
-                      cp -r _data/src/content/anime/. src/content/anime/
-                    fi
-                    echo "Anime count: $(ls src/content/anime/*.md 2>/dev/null | wc -l)"
-
-                - name: Setup Node
-                  uses: actions/setup-node@v4
-                  with:
-                    node-version: 24
-                    cache: npm
-
-                - name: Install
-                  run: npm install
-
-                - name: Build
-                  run: npm run build
-
-                - name: Deploy
-                  uses: cloudflare/wrangler-action@v4
-                  with:
-                    apiToken: ${{ secrets.CF_API_TOKEN }}
-                    accountId: ${{ secrets.CF_ACCOUNT_ID }}
-                    command: pages deploy dist --project-name=api-qimochi --branch=${{ github.ref_name }} --commit-dirty=true
           EOF
 
       - name: Commit & push
