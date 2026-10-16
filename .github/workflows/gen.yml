@@ -1,0 +1,380 @@
+name: Bootstrap API Project
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Create structure
+        run: |
+          mkdir -p src/pages/api/v1/anime
+          mkdir -p src/lib src/types
+          mkdir -p public
+          mkdir -p .github/workflows
+
+      - name: Write package.json
+        run: |
+          cat > package.json << 'EOF'
+          {
+            "name": "qimochi-api",
+            "version": "1.0.0",
+            "type": "module",
+            "private": true,
+            "scripts": {
+              "dev": "astro dev",
+              "build": "astro build",
+              "typecheck": "tsc --noEmit"
+            },
+            "dependencies": {
+              "astro": "^7.4.0"
+            },
+            "devDependencies": {
+              "typescript": "^5.7.2",
+              "wrangler": "^3.99.0"
+            }
+          }
+          EOF
+
+      - name: Write astro.config.mjs
+        run: |
+          cat > astro.config.mjs << 'EOF'
+          import { defineConfig } from 'astro/config';
+
+          export default defineConfig({
+            site: 'https://api-qimochi.pages.dev',
+            output: 'static',
+          });
+          EOF
+
+      - name: Write tsconfig.json
+        run: |
+          cat > tsconfig.json << 'EOF'
+          {
+            "extends": "astro/tsconfigs/strict",
+            "include": [".astro/types.d.ts", "**/*"],
+            "exclude": ["dist"],
+            "compilerOptions": {
+              "paths": {
+                "~/*": ["./src/*"]
+              }
+            }
+          }
+          EOF
+
+      - name: Write .gitignore
+        run: |
+          cat > .gitignore << 'EOF'
+          node_modules/
+          dist/
+          .astro/
+          .wrangler/
+          .env
+          .DS_Store
+          *.log
+          EOF
+
+      - name: Write src/content.config.ts
+        run: |
+          cat > src/content.config.ts << 'EOF'
+          import { defineCollection } from 'astro:content';
+          import { z } from 'astro/zod';
+          import { glob } from 'astro/loaders';
+
+          const Slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+          const ExternalUrl = z.url();
+
+          const AnimeType = z.enum(['TV', 'Movie', 'OVA', 'ONA', 'Special', 'Music', 'Unknown']);
+          const AnimeStatus = z.enum(['airing', 'finished', 'upcoming', 'hiatus', 'cancelled']);
+          const AnimeSource = z.enum([
+            'original', 'manga', 'light_novel', 'visual_novel', 'game',
+            'web_manga', 'web_novel', 'novel', 'book', 'picture_book',
+            'radio', 'music', '4_koma_manga', 'card_game', 'other',
+          ]);
+          const AnimeSeason = z.enum(['winter', 'spring', 'summer', 'fall']);
+          const AnimeRating = z.enum(['G', 'PG', 'PG-13', 'R', 'R+', 'Rx']);
+
+          const anime = defineCollection({
+            loader: glob({
+              pattern: ['**/*.md', '!**/_*.md'],
+              base: './src/content/anime',
+              deferRender: true,
+            }),
+            schema: z.object({
+              title: z.string().min(1),
+              titleEnglish: z.string().optional(),
+              titleNative: z.string().optional(),
+              malId: z.number().int().positive().optional(),
+              anilistId: z.number().int().positive().optional(),
+              kitsuId: z.string().optional(),
+              type: AnimeType,
+              status: AnimeStatus,
+              source: AnimeSource.optional(),
+              season: AnimeSeason.optional(),
+              year: z.number().int().min(1900).max(2100).optional(),
+              episodes: z.number().int().positive().nullable().optional(),
+              duration: z.number().int().positive().optional(),
+              rating: AnimeRating.optional(),
+              aired: z.object({
+                from: z.coerce.date().optional(),
+                to: z.coerce.date().nullable().optional(),
+              }).optional(),
+              stats: z.object({
+                score: z.number().min(0).max(10).optional(),
+                scoredBy: z.number().int().nonnegative().optional(),
+              }).optional(),
+              genres: z.array(Slug).default([]),
+              studios: z.array(Slug).default([]),
+              image: ExternalUrl.optional(),
+              banner: ExternalUrl.optional(),
+              trailer: z.string().optional(),
+              draft: z.boolean().default(false),
+              addedAt: z.coerce.date().optional(),
+              updatedAt: z.coerce.date().optional(),
+            }),
+          });
+
+          export const collections = { anime };
+          EOF
+
+      - name: Write src/lib/anime.ts
+        run: |
+          cat > src/lib/anime.ts << 'EOF'
+          import { getCollection, type CollectionEntry } from 'astro:content';
+
+          export type AnimeEntry = CollectionEntry<'anime'>;
+
+          export async function getAllAnime(): Promise<AnimeEntry[]> {
+            return getCollection('anime', ({ data }) => !data.draft);
+          }
+
+          export async function getAnimeById(id: string): Promise<AnimeEntry | null> {
+            const all = await getAllAnime();
+            return all.find((a) => a.id === id) ?? null;
+          }
+
+          export function animeToApi(entry: AnimeEntry) {
+            const d = entry.data;
+            return {
+              id: entry.id,
+              title: d.title,
+              titleEnglish: d.titleEnglish ?? null,
+              titleNative: d.titleNative ?? null,
+              image: d.image ?? null,
+              banner: d.banner ?? null,
+              type: d.type,
+              status: d.status,
+              source: d.source ?? null,
+              season: d.season ?? null,
+              year: d.year ?? d.aired?.from?.getFullYear() ?? null,
+              episodes: d.episodes ?? null,
+              duration: d.duration ?? null,
+              rating: d.rating ?? null,
+              genres: d.genres ?? [],
+              studios: d.studios ?? [],
+              score: d.stats?.score ?? null,
+              trailer: d.trailer ?? null,
+            };
+          }
+          EOF
+
+      - name: Write src/pages/api/v1/anime.json.ts
+        run: |
+          cat > src/pages/api/v1/anime.json.ts << 'EOF'
+          import type { APIRoute } from 'astro';
+          import { getAllAnime, animeToApi } from '~/lib/anime';
+
+          export const prerender = true;
+
+          export const GET: APIRoute = async () => {
+            const all = await getAllAnime();
+
+            const data = all
+              .map(animeToApi)
+              .sort((a, b) => {
+                // Terbaru dulu
+                const ta = a.year ?? 0;
+                const tb = b.year ?? 0;
+                if (ta !== tb) return tb - ta;
+                return a.title.localeCompare(b.title);
+              });
+
+            return new Response(
+              JSON.stringify(
+                {
+                  data,
+                  total: data.length,
+                  generated_at: new Date().toISOString(),
+                },
+                null,
+                2
+              ),
+              {
+                headers: {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800',
+                  'Access-Control-Allow-Origin': '*',
+                },
+              }
+            );
+          };
+          EOF
+
+      - name: Write src/pages/api/v1/anime/[slug].json.ts
+        run: |
+          cat > "src/pages/api/v1/anime/[slug].json.ts" << 'EOF'
+          import type { APIRoute } from 'astro';
+          import { getAllAnime, animeToApi } from '~/lib/anime';
+
+          export const prerender = true;
+
+          export async function getStaticPaths() {
+            const all = await getAllAnime();
+            return all.map((entry) => ({
+              params: { slug: entry.id },
+              props: { entry },
+            }));
+          }
+
+          export const GET: APIRoute = async ({ props }) => {
+            const { entry } = props as { entry: any };
+            const data = animeToApi(entry);
+
+            return new Response(
+              JSON.stringify({ data }, null, 2),
+              {
+                headers: {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800',
+                  'Access-Control-Allow-Origin': '*',
+                },
+              }
+            );
+          };
+          EOF
+
+      - name: Write src/pages/api/v1/meta.json.ts
+        run: |
+          cat > src/pages/api/v1/meta.json.ts << 'EOF'
+          import type { APIRoute } from 'astro';
+          import { getAllAnime } from '~/lib/anime';
+
+          export const prerender = true;
+
+          export const GET: APIRoute = async () => {
+            const all = await getAllAnime();
+
+            return new Response(
+              JSON.stringify(
+                {
+                  name: 'Qimochi API',
+                  version: 'v1',
+                  total_anime: all.length,
+                  generated_at: new Date().toISOString(),
+                  endpoints: {
+                    anime_index: '/api/v1/anime.json',
+                    anime_detail: '/api/v1/anime/{slug}.json',
+                    meta: '/api/v1/meta.json',
+                  },
+                },
+                null,
+                2
+              ),
+              {
+                headers: {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'public, max-age=3600',
+                  'Access-Control-Allow-Origin': '*',
+                },
+              }
+            );
+          };
+          EOF
+
+      - name: Write public/_headers
+        run: |
+          cat > public/_headers << 'EOF'
+          /api/*
+            Access-Control-Allow-Origin: *
+            Content-Type: application/json; charset=utf-8
+          EOF
+
+      - name: Write deploy workflow
+        run: |
+          cat > .github/workflows/deploy.yml << 'EOF'
+          name: Deploy API
+
+          on:
+            push:
+              branches: [main]
+            repository_dispatch:
+              types: [data-updated]
+            workflow_dispatch:
+
+          jobs:
+            build-deploy:
+              runs-on: ubuntu-latest
+              timeout-minutes: 10
+              steps:
+                - name: Checkout api-qimochi
+                  uses: actions/checkout@v7
+
+                - name: Checkout qimochi-data
+                  uses: actions/checkout@v7
+                  with:
+                    repository: bimaakbar-dev/qimochi-data
+                    token: ${{ secrets.QIMOCHI_DATA_PAT }}
+                    path: _data
+
+                - name: Inject data
+                  run: |
+                    rm -rf src/content/anime
+                    mkdir -p src/content/anime
+                    if [ -d _data/src/content/anime ]; then
+                      cp -r _data/src/content/anime/. src/content/anime/
+                    fi
+                    echo "Anime count: $(ls src/content/anime/*.md 2>/dev/null | wc -l)"
+
+                - name: Setup Node
+                  uses: actions/setup-node@v4
+                  with:
+                    node-version: 24
+                    cache: npm
+
+                - name: Install
+                  run: npm install
+
+                - name: Build
+                  run: npm run build
+
+                - name: Deploy
+                  uses: cloudflare/wrangler-action@v4
+                  with:
+                    apiToken: ${{ secrets.CF_API_TOKEN }}
+                    accountId: ${{ secrets.CF_ACCOUNT_ID }}
+                    command: pages deploy dist --project-name=api-qimochi --branch=${{ github.ref_name }} --commit-dirty=true
+          EOF
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "chore: bootstrap API project"
+            git push
+          fi
